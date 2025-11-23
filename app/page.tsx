@@ -1,64 +1,374 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
+import React, { useState, useEffect } from 'react';
+import { Cloud, Droplets, Sun, AlertTriangle, TrendingUp, Calendar, MapPin, CloudRain, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ScatterChart, Scatter, Cell, LineChart, Line } from 'recharts';
+
+// Tipos
+interface RegistroPrecipitacion {
+  fecha: string;
+  P42_Ramon_Huanuna: number;
+  P43_Limboasi: number;
+  P55_Diguchi: number;
+  precip: number;
+  year: number;
+  month: number;
+  quarter: number;
+}
+
+interface EventoExtremo {
+  fecha: string;
+  precipitacion: number;
+  año: number;
+  mes: number;
+  esP99: boolean;
+}
+
+interface DatosExtremos {
+  resumen: {
+    totalEventos: number;
+    percentil95: number;
+    percentil99: number;
+    maxPrecipitacion: number;
+    fechaMaxima: string;
+  };
+  porMes: { mes: string; eventos: number }[];
+  porAño: { año: number; eventos: number }[];
+  eventos: EventoExtremo[];
+}
+
+interface RachaSequia {
+  id: number;
+  fechaInicio: string;
+  fechaFin: string;
+  duracion: number;
+  año: number;
+  mes: number;
+}
+
+interface DatosSequias {
+  resumen: {
+    totalRachas: number;
+    diasTotalesSinLluvia: number;
+    sequiaMaxima: number;
+    fechaSequiaMaxima: string;
+    promedioRachas: number;
+    porcentajeDiasSecos: number;
+  };
+  porAño: { año: number; rachas: number; diasSecos: number; maxDuracion: number }[];
+  porMes: { mes: string; rachas: number }[];
+  porDuracion: { rango: string; cantidad: number }[];
+  rachas: RachaSequia[];
+}
+
+const calcularPercentil = (valores: number[], p: number): number => {
+  const sorted = [...valores].sort((a, b) => a - b);
+  const idx = Math.ceil((p / 100) * sorted.length) - 1;
+  return sorted[Math.max(0, idx)];
+};
+
+const analizarExtremos = (data: RegistroPrecipitacion[]): DatosExtremos => {
+  const precipitaciones = data.map(d => d.precip).filter(p => p > 0);
+  const p95 = calcularPercentil(precipitaciones, 95);
+  const p99 = calcularPercentil(precipitaciones, 99);
+  
+  const eventos: EventoExtremo[] = data
+    .filter(d => d.precip > p95)
+    .map(d => ({
+      fecha: d.fecha.split(' ')[0],
+      precipitacion: Math.round(d.precip * 100) / 100,
+      año: d.year,
+      mes: d.month,
+      esP99: d.precip > p99
+    }))
+    .sort((a, b) => b.precipitacion - a.precipitacion);
+
+  const mesesNombres = ['', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+  const porMesObj: Record<number, number> = {};
+  const porAñoObj: Record<number, number> = {};
+  
+  eventos.forEach(e => {
+    porMesObj[e.mes] = (porMesObj[e.mes] || 0) + 1;
+    porAñoObj[e.año] = (porAñoObj[e.año] || 0) + 1;
+  });
+
+  return {
+    resumen: {
+      totalEventos: eventos.length,
+      percentil95: Math.round(p95 * 100) / 100,
+      percentil99: Math.round(p99 * 100) / 100,
+      maxPrecipitacion: eventos[0]?.precipitacion || 0,
+      fechaMaxima: eventos[0]?.fecha || '-',
+    },
+    porMes: Object.entries(porMesObj).map(([mes, count]) => ({ mes: mesesNombres[parseInt(mes)], eventos: count })).sort((a, b) => b.eventos - a.eventos),
+    porAño: Object.entries(porAñoObj).map(([año, count]) => ({ año: parseInt(año), eventos: count })).sort((a, b) => a.año - b.año),
+    eventos
+  };
+};
+
+const estaciones = [
+  { id: 'P42', nombre: 'Ramón Huañuna', altitud: '4200m', color: 'bg-blue-500' },
+  { id: 'P43', nombre: 'Limboasi', altitud: '4350m', color: 'bg-emerald-500' },
+  { id: 'P55', nombre: 'Diguchi', altitud: '4100m', color: 'bg-violet-500' }
+];
+
+const StatCard = ({ icon: Icon, title, value, unit, color, subtitle }: { icon: React.ElementType; title: string; value: string | number; unit: string; color: string; subtitle?: string }) => (
+  <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+    <div className="flex items-start justify-between">
+      <div>
+        <p className="text-gray-500 text-xs font-medium">{title}</p>
+        <p className="text-xl font-bold text-gray-800 mt-1">{value}<span className="text-xs font-normal text-gray-400 ml-1">{unit}</span></p>
+        {subtitle && <p className="text-xs text-gray-400 mt-1">{subtitle}</p>}
+      </div>
+      <div className={`p-2 rounded-lg ${color}`}><Icon className="w-4 h-4 text-white" /></div>
+    </div>
+  </div>
+);
+
+export default function Dashboard() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tabActiva, setTabActiva] = useState<'extremos' | 'sequias'>('extremos');
+  const [datosExtremos, setDatosExtremos] = useState<DatosExtremos>({ resumen: { totalEventos: 0, percentil95: 0, percentil99: 0, maxPrecipitacion: 0, fechaMaxima: '-' }, porMes: [], porAño: [], eventos: [] });
+  const [datosSequias, setDatosSequias] = useState<DatosSequias>({ resumen: { totalRachas: 0, diasTotalesSinLluvia: 0, sequiaMaxima: 0, fechaSequiaMaxima: '-', promedioRachas: 0, porcentajeDiasSecos: 0 }, porAño: [], porMes: [], porDuracion: [], rachas: [] });
+  const [mostrarTodos, setMostrarTodos] = useState(false);
+  const [añoFiltro, setAñoFiltro] = useState('todos');
+  const [años, setAños] = useState<number[]>([]);
+  const [datosOriginales, setDatosOriginales] = useState<RegistroPrecipitacion[]>([]);
+  const [loadingSequias, setLoadingSequias] = useState(false);
+
+  useEffect(() => {
+    const cargarDatos = async () => {
+      try {
+        const res = await fetch('/data/precipitaciones.json');
+        if (!res.ok) throw new Error('No se pudo cargar el archivo JSON');
+        const datos: RegistroPrecipitacion[] = await res.json();
+        setDatosOriginales(datos);
+        setAños([...new Set(datos.map(d => d.year))].sort());
+        setDatosExtremos(analizarExtremos(datos));
+        cargarSequias('todos');
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Error desconocido');
+      } finally {
+        setLoading(false);
+      }
+    };
+    cargarDatos();
+  }, []);
+
+  const cargarSequias = async (año: string) => {
+    setLoadingSequias(true);
+    try {
+      const params = new URLSearchParams();
+      if (año !== 'todos') params.append('año', año);
+      const res = await fetch(`/api/sequias?${params}`);
+      const json = await res.json();
+      if (json.success) setDatosSequias(json.data);
+    } catch (err) {
+      console.error('Error cargando sequías:', err);
+    } finally {
+      setLoadingSequias(false);
+    }
+  };
+
+  useEffect(() => {
+    if (datosOriginales.length === 0) return;
+    const datosFiltrados = añoFiltro === 'todos' ? datosOriginales : datosOriginales.filter(d => d.year === parseInt(añoFiltro));
+    setDatosExtremos(analizarExtremos(datosFiltrados));
+    cargarSequias(añoFiltro);
+  }, [añoFiltro, datosOriginales]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-500 mx-auto" />
+          <p className="mt-2 text-gray-600">Cargando datos de precipitación...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
+        <div className="text-center bg-white p-6 rounded-xl shadow-lg">
+          <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-3" />
+          <h2 className="text-lg font-semibold text-gray-800">Error al cargar datos</h2>
+          <p className="text-gray-600 mt-1">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-4 py-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl"><Cloud className="w-5 h-5 text-white" /></div>
+              <div>
+                <h1 className="text-lg font-bold text-gray-800">Sistema Climático Antisana</h1>
+                <p className="text-xs text-gray-500 flex items-center gap-1"><MapPin className="w-3 h-3" /> Ecuador • Análisis de Precipitación</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">{datosOriginales.length.toLocaleString()} registros</span>
+              <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">● API Activa</span>
+            </div>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-4 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div className="flex gap-2">
+            <button onClick={() => { setTabActiva('extremos'); setMostrarTodos(false); }} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-colors ${tabActiva === 'extremos' ? 'bg-red-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>
+              <CloudRain className="w-4 h-4" /> Eventos Extremos
+            </button>
+            <button onClick={() => { setTabActiva('sequias'); setMostrarTodos(false); }} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-colors ${tabActiva === 'sequias' ? 'bg-amber-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>
+              <Sun className="w-4 h-4" /> Sequías
+            </button>
+          </div>
+          <select value={añoFiltro} onChange={(e) => setAñoFiltro(e.target.value)} className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 text-gray-600 bg-white">
+            <option value="todos">Todos los años</option>
+            {años.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
         </div>
+
+        {tabActiva === 'extremos' && (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+              <StatCard icon={AlertTriangle} title="Eventos Extremos" value={datosExtremos.resumen.totalEventos} unit="total" color="bg-red-500" />
+              <StatCard icon={CloudRain} title="Percentil 95" value={datosExtremos.resumen.percentil95} unit="mm" color="bg-amber-500" subtitle="Umbral extremo" />
+              <StatCard icon={Droplets} title="Percentil 99" value={datosExtremos.resumen.percentil99} unit="mm" color="bg-red-600" subtitle="Muy extremo" />
+              <StatCard icon={TrendingUp} title="Máx. Registrado" value={datosExtremos.resumen.maxPrecipitacion} unit="mm" color="bg-violet-500" />
+              <StatCard icon={Calendar} title="Fecha Máxima" value={datosExtremos.resumen.fechaMaxima} unit="" color="bg-blue-500" />
+            </div>
+
+            <div className="grid lg:grid-cols-2 gap-4 mb-4">
+              <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+                <h3 className="font-semibold text-gray-800 mb-1">Eventos Extremos por Intensidad</h3>
+                <p className="text-xs text-gray-500 mb-3">Cada punto representa un evento &gt; P95</p>
+                <ResponsiveContainer width="100%" height={200}>
+                  <ScatterChart margin={{ top: 10, right: 10, bottom: 10, left: 0 }}>
+                    <XAxis dataKey="año" type="number" domain={['dataMin', 'dataMax']} tick={{ fontSize: 11 }} />
+                    <YAxis dataKey="precipitacion" unit="mm" tick={{ fontSize: 11 }} />
+                    <Tooltip content={({ active, payload }) => active && payload?.[0] ? <div className="bg-white p-2 rounded shadow-lg border text-xs"><p className="font-semibold">{payload[0].payload.fecha}</p><p className="text-blue-600">{payload[0].payload.precipitacion} mm</p></div> : null} />
+                    <Scatter data={datosExtremos.eventos}>{datosExtremos.eventos.map((e, i) => <Cell key={i} fill={e.esP99 ? '#dc2626' : '#f59e0b'} />)}</Scatter>
+                  </ScatterChart>
+                </ResponsiveContainer>
+                <div className="flex justify-center gap-4 mt-2 text-xs">
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500"></span> P95</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-600"></span> P99</span>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+                <h3 className="font-semibold text-gray-800 mb-1">Eventos Extremos por Mes</h3>
+                <p className="text-xs text-gray-500 mb-3">Frecuencia de eventos según el mes</p>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={datosExtremos.porMes} margin={{ top: 10, right: 10, bottom: 10, left: 0 }}>
+                    <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip content={({ active, payload }) => active && payload?.[0] ? <div className="bg-white p-2 rounded shadow-lg border text-xs"><p className="font-semibold">{payload[0].payload.mes}</p><p className="text-blue-600">{payload[0].value} eventos</p></div> : null} />
+                    <Bar dataKey="eventos" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="p-4 border-b border-gray-100 flex justify-between items-center">
+                <div><h3 className="font-semibold text-gray-800">Eventos Extremos Detectados</h3><p className="text-sm text-gray-500">Precipitación &gt; Percentil 95</p></div>
+                <span className="px-2 py-1 bg-red-100 text-red-700 text-xs font-medium rounded-full">{datosExtremos.eventos.length} eventos</span>
+              </div>
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50"><tr><th className="px-4 py-2 text-left text-gray-600">Fecha</th><th className="px-4 py-2 text-left text-gray-600">Precipitación</th><th className="px-4 py-2 text-left text-gray-600">Nivel</th></tr></thead>
+                <tbody>{(mostrarTodos ? datosExtremos.eventos : datosExtremos.eventos.slice(0, 5)).map((e, i) => <tr key={i} className="border-t border-gray-50 hover:bg-gray-50"><td className="px-4 py-2">{e.fecha}</td><td className="px-4 py-2 font-semibold">{e.precipitacion} mm</td><td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs ${e.esP99 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{e.esP99 ? 'P99 Extremo' : 'P95 Alto'}</span></td></tr>)}</tbody>
+              </table>
+              {datosExtremos.eventos.length > 5 && <button onClick={() => setMostrarTodos(!mostrarTodos)} className="w-full py-2 text-sm text-blue-600 hover:bg-blue-50 flex items-center justify-center gap-1">{mostrarTodos ? <><ChevronUp className="w-4 h-4" /> Ver menos</> : <><ChevronDown className="w-4 h-4" /> Ver todos ({datosExtremos.eventos.length})</>}</button>}
+            </div>
+          </>
+        )}
+
+        {tabActiva === 'sequias' && (
+          <>
+            {loadingSequias ? (
+              <div className="flex justify-center items-center py-12"><Loader2 className="w-6 h-6 animate-spin text-amber-500" /></div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
+                  <StatCard icon={Sun} title="Total Rachas" value={datosSequias.resumen.totalRachas} unit="periodos" color="bg-amber-500" />
+                  <StatCard icon={Calendar} title="Días Secos" value={datosSequias.resumen.diasTotalesSinLluvia.toLocaleString()} unit="días" color="bg-orange-500" />
+                  <StatCard icon={AlertTriangle} title="Sequía Máxima" value={datosSequias.resumen.sequiaMaxima} unit="días" color="bg-red-500" />
+                  <StatCard icon={TrendingUp} title="Promedio" value={datosSequias.resumen.promedioRachas} unit="días" color="bg-yellow-500" />
+                  <StatCard icon={Droplets} title="% Días Secos" value={datosSequias.resumen.porcentajeDiasSecos} unit="%" color="bg-amber-600" />
+                  <StatCard icon={Calendar} title="Inicio Máx." value={datosSequias.resumen.fechaSequiaMaxima} unit="" color="bg-orange-600" />
+                </div>
+
+                <div className="grid lg:grid-cols-2 gap-4 mb-4">
+                  <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+                    <h3 className="font-semibold text-gray-800 mb-1">Sequías por Año</h3>
+                    <p className="text-xs text-gray-500 mb-3">Duración máxima de sequía por año</p>
+                    <ResponsiveContainer width="100%" height={200}>
+                      <LineChart data={datosSequias.porAño} margin={{ top: 10, right: 10, bottom: 10, left: 0 }}>
+                        <XAxis dataKey="año" tick={{ fontSize: 11 }} />
+                        <YAxis tick={{ fontSize: 11 }} unit="d" />
+                        <Tooltip content={({ active, payload }) => active && payload?.[0] ? <div className="bg-white p-2 rounded shadow-lg border text-xs"><p className="font-semibold">Año {payload[0].payload.año}</p><p className="text-amber-600">Máx: {payload[0].payload.maxDuracion} días</p><p className="text-gray-500">{payload[0].payload.rachas} rachas</p></div> : null} />
+                        <Line type="monotone" dataKey="maxDuracion" stroke="#f59e0b" strokeWidth={2} dot={{ fill: '#f59e0b', r: 4 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+                    <h3 className="font-semibold text-gray-800 mb-1">Distribución por Duración</h3>
+                    <p className="text-xs text-gray-500 mb-3">Cantidad de sequías según su duración</p>
+                    <ResponsiveContainer width="100%" height={200}>
+                      <BarChart data={datosSequias.porDuracion} margin={{ top: 10, right: 10, bottom: 10, left: 0 }}>
+                        <XAxis dataKey="rango" tick={{ fontSize: 10 }} />
+                        <YAxis tick={{ fontSize: 11 }} />
+                        <Tooltip content={({ active, payload }) => active && payload?.[0] ? <div className="bg-white p-2 rounded shadow-lg border text-xs"><p className="font-semibold">{payload[0].payload.rango}</p><p className="text-amber-600">{payload[0].value} sequías</p></div> : null} />
+                        <Bar dataKey="cantidad" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                  <div className="p-4 border-b border-gray-100 flex justify-between items-center">
+                    <div><h3 className="font-semibold text-gray-800">Rachas de Sequía Detectadas</h3><p className="text-sm text-gray-500">Periodos de 3+ días sin lluvia</p></div>
+                    <span className="px-2 py-1 bg-amber-100 text-amber-700 text-xs font-medium rounded-full">{datosSequias.rachas.length} rachas</span>
+                  </div>
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50"><tr><th className="px-4 py-2 text-left text-gray-600">Inicio</th><th className="px-4 py-2 text-left text-gray-600">Fin</th><th className="px-4 py-2 text-left text-gray-600">Duración</th><th className="px-4 py-2 text-left text-gray-600">Severidad</th></tr></thead>
+                    <tbody>{(mostrarTodos ? datosSequias.rachas : datosSequias.rachas.slice(0, 5)).map((r, i) => <tr key={i} className="border-t border-gray-50 hover:bg-gray-50"><td className="px-4 py-2">{r.fechaInicio}</td><td className="px-4 py-2">{r.fechaFin}</td><td className="px-4 py-2 font-semibold">{r.duracion} días</td><td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs ${r.duracion >= 15 ? 'bg-red-100 text-red-700' : r.duracion >= 7 ? 'bg-amber-100 text-amber-700' : 'bg-yellow-100 text-yellow-700'}`}>{r.duracion >= 15 ? 'Severa' : r.duracion >= 7 ? 'Moderada' : 'Leve'}</span></td></tr>)}</tbody>
+                  </table>
+                  {datosSequias.rachas.length > 5 && <button onClick={() => setMostrarTodos(!mostrarTodos)} className="w-full py-2 text-sm text-amber-600 hover:bg-amber-50 flex items-center justify-center gap-1">{mostrarTodos ? <><ChevronUp className="w-4 h-4" /> Ver menos</> : <><ChevronDown className="w-4 h-4" /> Ver todas ({datosSequias.rachas.length})</>}</button>}
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        <div className="mt-4 grid lg:grid-cols-4 gap-4">
+          <div className="lg:col-span-3 bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+            <h3 className="font-semibold text-gray-800 mb-3">Resumen Comparativo</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+              <div className="p-3 bg-red-50 rounded-lg"><p className="text-2xl font-bold text-red-600">{datosExtremos.resumen.totalEventos}</p><p className="text-xs text-red-500">Eventos Extremos</p></div>
+              <div className="p-3 bg-amber-50 rounded-lg"><p className="text-2xl font-bold text-amber-600">{datosSequias.resumen.totalRachas}</p><p className="text-xs text-amber-500">Rachas Sequía</p></div>
+              <div className="p-3 bg-blue-50 rounded-lg"><p className="text-2xl font-bold text-blue-600">{datosExtremos.resumen.maxPrecipitacion}</p><p className="text-xs text-blue-500">Máx. Lluvia (mm)</p></div>
+              <div className="p-3 bg-orange-50 rounded-lg"><p className="text-2xl font-bold text-orange-600">{datosSequias.resumen.sequiaMaxima}</p><p className="text-xs text-orange-500">Máx. Sequía (días)</p></div>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+            <h3 className="font-semibold text-gray-800 mb-3">Estaciones</h3>
+            <div className="space-y-2">{estaciones.map(est => <div key={est.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg"><div className="flex items-center gap-2"><div className={`w-2 h-2 rounded-full ${est.color}`}></div><div><p className="font-medium text-sm text-gray-800">{est.id}</p><p className="text-xs text-gray-500">{est.nombre}</p></div></div><span className="text-xs text-gray-400">{est.altitud}</span></div>)}</div>
+          </div>
+        </div>
+
+        <footer className="mt-6 text-center text-xs text-gray-400 pb-4"><p>Sistema de Análisis Climático del Antisana • {años.length > 0 ? `${años[0]}-${años[años.length-1]}` : ''}</p></footer>
       </main>
     </div>
   );
