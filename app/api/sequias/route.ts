@@ -24,6 +24,11 @@ interface RachaSequia {
   trimestre: number;
 }
 
+interface RachaActualType {
+  inicio: number;
+  duracion: number;
+}
+
 interface RespuestaSequias {
   resumen: {
     totalRachas: number;
@@ -55,7 +60,7 @@ function analizarSequias(data: RegistroPrecipitacion[]): RespuestaSequias {
   const rachas: RachaSequia[] = [];
   const mesesNombres = ['', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
   
-  let rachaActual: { inicio: number; duracion: number } | null = null;
+  let rachaActual: RachaActualType | null = null;
   let idRacha = 0;
   let diasTotalesSinLluvia = 0;
   const umbralSeco = 0.1;
@@ -71,37 +76,45 @@ function analizarSequias(data: RegistroPrecipitacion[]): RespuestaSequias {
         rachaActual.duracion++;
       }
     } else {
-      if (rachaActual !== null && rachaActual.duracion >= 3) {
-        const registroInicio = datosOrdenados[rachaActual.inicio];
-        const registroFin = datosOrdenados[index - 1];
-        
-        rachas.push({
-          id: ++idRacha,
-          fechaInicio: registroInicio.fecha.split(' ')[0],
-          fechaFin: registroFin.fecha.split(' ')[0],
-          duracion: rachaActual.duracion,
-          año: registroInicio.year,
-          mes: registroInicio.month,
-          trimestre: registroInicio.quarter
-        });
+      // Día con lluvia - terminar racha si existe
+      if (rachaActual !== null) {
+        const racha: RachaActualType = rachaActual; // Guardamos la referencia
+        if (racha.duracion >= 3) {
+          const registroInicio = datosOrdenados[racha.inicio];
+          const registroFin = datosOrdenados[index - 1];
+          
+          rachas.push({
+            id: ++idRacha,
+            fechaInicio: registroInicio.fecha.split(' ')[0],
+            fechaFin: registroFin.fecha.split(' ')[0],
+            duracion: racha.duracion,
+            año: registroInicio.year,
+            mes: registroInicio.month,
+            trimestre: registroInicio.quarter
+          });
+        }
+        rachaActual = null;
       }
-      rachaActual = null;
     }
   });
 
-  if (rachaActual !== null && rachaActual.duracion >= 3) {
-    const registroInicio = datosOrdenados[rachaActual.inicio];
-    const registroFin = datosOrdenados[datosOrdenados.length - 1];
-    
-    rachas.push({
-      id: ++idRacha,
-      fechaInicio: registroInicio.fecha.split(' ')[0],
-      fechaFin: registroFin.fecha.split(' ')[0],
-      duracion: rachaActual.duracion,
-      año: registroInicio.year,
-      mes: registroInicio.month,
-      trimestre: registroInicio.quarter
-    });
+  // Verificar racha al final
+  if (rachaActual !== null) {
+    const racha: RachaActualType = rachaActual; // Guardamos la referencia
+    if (racha.duracion >= 3) {
+      const registroInicio = datosOrdenados[racha.inicio];
+      const registroFin = datosOrdenados[datosOrdenados.length - 1];
+      
+      rachas.push({
+        id: ++idRacha,
+        fechaInicio: registroInicio.fecha.split(' ')[0],
+        fechaFin: registroFin.fecha.split(' ')[0],
+        duracion: racha.duracion,
+        año: registroInicio.year,
+        mes: registroInicio.month,
+        trimestre: registroInicio.quarter
+      });
+    }
   }
 
   rachas.sort((a, b) => b.duracion - a.duracion);
