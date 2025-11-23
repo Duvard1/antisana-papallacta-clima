@@ -1,7 +1,6 @@
-// src/app/api/extremos/route.ts
-
 import { NextResponse } from 'next/server';
-import datos from '@/data/precipitaciones.json';
+import fs from 'fs';
+import path from 'path';
 
 // Tipos
 interface RegistroPrecipitacion {
@@ -41,6 +40,13 @@ interface RespuestaExtremos {
   porAño: Record<number, number>;
   porMes: Record<number, number>;
   eventos: EventoExtremo[];
+}
+
+// Cargar datos del JSON
+function cargarDatos(): RegistroPrecipitacion[] {
+  const filePath = path.join(process.cwd(), 'public', 'data', 'precipitaciones.json');
+  const fileContent = fs.readFileSync(filePath, 'utf-8');
+  return JSON.parse(fileContent);
 }
 
 // Función para calcular percentil
@@ -89,7 +95,7 @@ function analizarEventosExtremos(data: RegistroPrecipitacion[]): RespuestaExtrem
       const percentilEvento = precip > p99 ? 99 : 95;
       
       eventosExtremos.push({
-        fecha,
+        fecha: fecha.split(' ')[0],
         precipitacion: Math.round(precip * 100) / 100,
         estacion: estacionMax.nombre,
         percentil: percentilEvento,
@@ -127,7 +133,7 @@ function analizarEventosExtremos(data: RegistroPrecipitacion[]): RespuestaExtrem
       percentil95: Math.round(p95 * 100) / 100,
       percentil99: Math.round(p99 * 100) / 100,
       maxPrecipitacion: Math.round(maxPrecip * 100) / 100,
-      fechaMaxima: fechaMax,
+      fechaMaxima: fechaMax.split(' ')[0],
       promedioEventosExtremos: Math.round(
         (eventosExtremos.reduce((sum, e) => sum + e.precipitacion, 0) / 
         eventosExtremos.length) * 100
@@ -151,8 +157,11 @@ export async function GET(request: Request) {
     const estacion = searchParams.get('estacion');
     const limite = parseInt(searchParams.get('limite') || '100');
 
+    // Cargar datos
+    const datos = cargarDatos();
+
     // Filtrar datos si hay parámetros
-    let datosFiltrados = datos as RegistroPrecipitacion[];
+    let datosFiltrados = datos;
     
     if (año) {
       datosFiltrados = datosFiltrados.filter(d => d.year === parseInt(año));
