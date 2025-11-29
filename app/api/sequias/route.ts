@@ -39,6 +39,7 @@ interface RespuestaSequias {
     porcentajeDiasSecos: number;
   };
   porAño: { año: number; rachas: number; diasSecos: number; maxDuracion: number }[];
+  frecuenciaPorAño: { año: number; frecuencia: number }[];
   porMes: { mes: string; rachas: number }[];
   porDuracion: { rango: string; cantidad: number }[];
   rachas: RachaSequia[];
@@ -152,6 +153,15 @@ function analizarSequias(data: RegistroPrecipitacion[]): RespuestaSequias {
 
   const sequiaMaxima = rachas[0] || { duracion: 0, fechaInicio: '-' };
 
+    // Nueva tabla de frecuencia de sequías por año
+  const frecuenciaPorAño = Object.entries(porAñoObj)
+    .map(([año, stats]) => ({
+      año: parseInt(año),
+      frecuencia: stats.rachas
+    }))
+    .sort((a, b) => a.año - b.año);
+
+
   return {
     resumen: {
       totalRachas: rachas.length,
@@ -164,10 +174,12 @@ function analizarSequias(data: RegistroPrecipitacion[]): RespuestaSequias {
       porcentajeDiasSecos: Math.round((diasTotalesSinLluvia / datosOrdenados.length) * 1000) / 10
     },
     porAño,
+    frecuenciaPorAño,      // ⬅⬅⬅ NUEVO
     porMes,
     porDuracion,
     rachas: rachas.slice(0, 100)
   };
+
 }
 
 // GET Handler
